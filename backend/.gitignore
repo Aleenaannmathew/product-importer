@@ -17,3 +17,6 @@ build/
 celerybeat-schedule
 *.db
 *.sqlite
+htmlcov/
+.coverage
+coverage.xml
