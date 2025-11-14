@@ -1,41 +1,31 @@
-# -----------------------------
-# Base Image
-# -----------------------------
+# ----------------------------------------
+# Base Python Image
+# ----------------------------------------
 FROM python:3.12-slim
 
-# -----------------------------
-# Environment
-# -----------------------------
-WORKDIR /app
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# -----------------------------
-# System Dependencies
-# -----------------------------
+# Install system dependencies including supervisor
 RUN apt-get update && apt-get install -y \
+    supervisor \
     build-essential \
-    curl \
-    libpq-dev \
-    && apt-get clean
+    && rm -rf /var/lib/apt/lists/*
 
-# -----------------------------
-# Install Python Dependencies
-# -----------------------------
+# Set work directory
+WORKDIR /app
+
+# Copy requirements file
 COPY requirements.txt .
+
+# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# -----------------------------
-# Copy App Code
-# -----------------------------
+# Copy the rest of the project
 COPY . .
 
-# -----------------------------
-# Expose Port
-# -----------------------------
+# Copy supervisor config
+COPY supervisord.conf /app/supervisord.conf
+
+# Expose port Render uses
 EXPOSE 8000
 
-# -----------------------------
-# Default Command (Uvicorn/Gunicorn)
-# -----------------------------
-CMD ["gunicorn", "-k", "uvicorn.workers.UvicornWorker", "-w", "2", "app.main:app", "--bind", "0.0.0.0:8000"]
+# Start Supervisor: runs both Gunicorn + Celery worker
+CMD ["supervisord", "-c", "/app/supervisord.conf"]
