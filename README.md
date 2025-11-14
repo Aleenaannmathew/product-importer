@@ -90,8 +90,6 @@ The core goal is to implement a production-ready web application capable of:
 
 # 🏗️ **System Architecture**
 
-mathematica
-Copy code
               ┌────────────────────────┐
               │       Frontend (React)  │
               │  Upload CSV / CRUD / UI │
@@ -118,8 +116,7 @@ Copy code
                ┌────────────────────────┐
                │ PostgreSQL (Render)    │
                └────────────────────────┘
-markdown
-Copy code
+
 
 Broker: **Upstash Redis Free Tier**  
 Deployment: **Render Web Service + Worker**
