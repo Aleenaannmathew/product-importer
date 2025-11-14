@@ -12,10 +12,6 @@ All services are deployed publicly on a **Google Cloud VM**.
 ### **Frontend + API**
 🔗 http://34.29.230.87
 
-### **API Health Check**
-🔗 http://34.29.230.87/api/health  
-→ `{ "status": "healthy" }`
-
 The backend uses **Gunicorn, Celery, Redis, PostgreSQL**, managed with **systemd**, ensuring all services automatically restart on VM reboot.
 
 ---
