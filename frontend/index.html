@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Product Importer - Acme Inc.</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const API_BASE = window.location.origin + '/api';
+
+        function App() {
+            const [activeTab, setActiveTab] = useState('upload');
+            const [products, setProducts] = useState([]);
+            const [webhooks, setWebhooks] = useState([]);
+            const [uploadProgress, setUploadProgress] = useState(null);
+            const [filters, setFilters] = useState({ search: '', active: 'all' });
+            const [page, setPage] = useState(1);
+            const [totalPages, setTotalPages] = useState(1);
+            const [loading, setLoading] = useState(false);
+            const [lastUploadedFile, setLastUploadedFile] = useState(null);
+            const fileInputRef = useRef(null);
+
+            const Toast = Swal.mixin({
+                toast: true,
+                position: 'top-end',
+                showConfirmButton: false,
+                timer: 3000,
+                timerProgressBar: true,
+                didOpen: (toast) => {
+                    toast.addEventListener('mouseenter', Swal.stopTimer)
+                    toast.addEventListener('mouseleave', Swal.resumeTimer)
+                }
+            });
+
+            const showToast = (message, type = 'success') => {
+                Toast.fire({ icon: type, title: message });
+            };
+
+            const fetchProducts = async () => {
+                setLoading(true);
+                try {
+                    const params = new URLSearchParams({
+                        page: page.toString(),
+                        per_page: '20',
+                        ...(filters.search && { search: filters.search }),
+                        ...(filters.active !== 'all' && { active: filters.active })
+                    });
+                    const res = await fetch(`${API_BASE}/products?${params}`);
+                    const data = await res.json();
+                    setProducts(data.products || []);
+                    setTotalPages(data.total_pages || 1);
+                } catch (err) {
+                    showToast('Failed to fetch products', 'error');
+                }
+                setLoading(false);
+            };
+
+            const fetchWebhooks = async () => {
+                try {
+                    const res = await fetch(`${API_BASE}/webhooks`);
+                    const data = await res.json();
+                    setWebhooks(data.webhooks || []);
+                } catch (err) {
+                    showToast('Failed to fetch webhooks', 'error');
+                }
+            };
+
+            useEffect(() => {
+                if (activeTab === 'products') fetchProducts();
+                if (activeTab === 'webhooks') fetchWebhooks();
+            }, [activeTab, page, filters]);
+
+          
+            const processUpload = async (file) => {
+                const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+
+              
+                if (file.size > 100 * 1024 * 1024) {
+                    const result = await Swal.fire({
+                        title: 'Large File Detected',
+                        html: `
+                            <div class="text-left">
+                                <p class="mb-2">File size: <strong>${fileSizeMB} MB</strong></p>
+                                <p class="text-sm text-gray-600">Large files may take several minutes to process. Continue?</p>
+                            </div>
+                        `,
+                        icon: 'warning',
+                        showCancelButton: true,
+                        confirmButtonText: 'Yes, upload',
+                        cancelButtonText: 'Cancel'
+                    });
+                    
+                    if (!result.isConfirmed) return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', file);
+
+                setUploadProgress({ status: 'uploading', percent: 0 });
+                setLastUploadedFile(file); 
+
+                try {
+                    const res = await fetch(`${API_BASE}/products/import`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!res.ok) {
+                        const error = await res.json();
+                        throw new Error(error.detail || 'Upload failed');
+                    }
+
+                    const data = await res.json();
+                    const jobId = data.job_id;
+
+                    showToast('Upload started! Processing...', 'info');
+
+                    const eventSource = new EventSource(`${API_BASE}/products/import/${jobId}/progress`);
+                    
+                    eventSource.onmessage = (event) => {
+                        const progress = JSON.parse(event.data);
+                        setUploadProgress(progress);
+                        
+                        if (progress.status === 'completed') {
+                            eventSource.close();
+                            
+                            Swal.fire({
+                                icon: 'success',
+                                title: '✅ Import Complete!',
+                                html: `
+                                    <div class="text-left">
+                                        <p class="text-lg font-bold text-green-600 mb-3">
+                                            Successfully imported ${progress.processed?.toLocaleString() || 0} products
+                                        </p>
+                                        <div class="bg-green-50 p-4 rounded-lg">
+                                            <p class="text-sm text-gray-700">
+                                                All products have been imported successfully!
+                                            </p>
+                                        </div>
+                                    </div>
+                                `,
+                                showConfirmButton: true,
+                                confirmButtonText: 'View Products',
+                                timer: 5000
+                            }).then((result) => {
+                                if (result.isConfirmed) {
+                                    setActiveTab('products');
+                                }
+                            });
+                            
+                            setTimeout(() => {
+                                setUploadProgress(null);
+                                setLastUploadedFile(null);
+                            }, 3000);
+                        } 
+                     
+                        else if (progress.status === 'completed_with_errors') {
+                            eventSource.close();
+                            
+                            Swal.fire({
+                                icon: 'warning',
+                                title: '⚠️ Completed with Errors',
+                                html: `
+                                    <div class="text-left space-y-3">
+                                        <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+                                            <p class="font-bold text-yellow-800 mb-1">
+                                                Processed: ${progress.processed?.toLocaleString() || 0}/${progress.total?.toLocaleString() || 0} products
+                                            </p>
+                                            <p class="text-sm text-yellow-700">Some products were imported successfully, but errors occurred.</p>
+                                        </div>
+                                        
+                                        <div class="bg-red-50 border border-red-200 rounded-lg p-4 max-h-80 overflow-y-auto">
+                                            <p class="font-semibold text-red-800 mb-2">📋 Error Details:</p>
+                                            <pre class="text-xs text-red-700 whitespace-pre-wrap font-mono">${progress.error || 'Unknown errors occurred'}</pre>
+                                        </div>
+                                    </div>
+                                `,
+                                width: '650px',
+                                confirmButtonText: 'View Imported Products',
+                                showCancelButton: true,
+                                cancelButtonText: 'Close'
+                            }).then((result) => {
+                                if (result.isConfirmed) {
+                                    setActiveTab('products');
+                                }
+                            });
+                            
+                            setTimeout(() => {
+                                setUploadProgress(null);
+                                setLastUploadedFile(null);
+                            }, 3000);
+                        } 
+                    
+                        else if (progress.status === 'failed') {
+                            eventSource.close();
+                            
+                            Swal.fire({
+                                icon: 'error',
+                                title: '❌ Import Failed',
+                                html: `
+                                    <div class="text-left space-y-4">
+                                        <div class="bg-red-50 border-l-4 border-red-500 p-4">
+                                            <p class="font-bold text-red-800 text-lg mb-2">
+                                                Import failed - No products were imported
+                                            </p>
+                                            <p class="text-sm text-red-700">Please review the errors below and fix your CSV file.</p>
+                                        </div>
+                                        
+                                        <div class="bg-gray-50 border border-red-300 rounded-lg p-4 max-h-96 overflow-y-auto">
+                                            <p class="font-semibold text-red-900 mb-2">🔍 Error Details:</p>
+                                            <pre class="text-sm text-red-800 whitespace-pre-wrap font-mono leading-relaxed">${progress.error || 'Unknown error occurred. Please check your CSV format and try again.'}</pre>
+                                        </div>
+                                        
+                                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                            <p class="text-sm font-semibold text-blue-800 mb-2">💡 Common Issues:</p>
+                                            <ul class="text-xs text-blue-700 space-y-1 list-disc pl-5">
+                                                <li>Missing required columns: <code class="bg-blue-100 px-1 rounded font-mono">sku</code>, <code class="bg-blue-100 px-1 rounded font-mono">name</code></li>
+                                                <li>CSV file encoding (must be UTF-8)</li>
+                                                <li>Empty or invalid SKUs</li>
+                                                <li>Missing product names</li>
+                                                <li>File is corrupted or improperly formatted</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                `,
+                                width: '700px',
+                                confirmButtonText: '🔄 Try Again',
+                                showCancelButton: true,
+                                cancelButtonText: 'Close',
+                                confirmButtonColor: '#2563eb',
+                                cancelButtonColor: '#6b7280'
+                            }).then((result) => {
+                                if (result.isConfirmed && lastUploadedFile) {
+                                   
+                                    processUpload(lastUploadedFile);
+                                }
+                            });
+                            
+                            setUploadProgress(null);
+                        }
+                    };
+
+                    eventSource.onerror = () => {
+                        eventSource.close();
+                        setUploadProgress({ status: 'failed', percent: 0 });
+                        showToast('Connection lost. Please refresh.', 'error');
+                    };
+
+                } catch (err) {
+                    setUploadProgress({ status: 'failed', percent: 0 });
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Upload Failed',
+                        text: err.message || 'Failed to upload file. Please try again.',
+                        confirmButtonText: 'Try Again'
+                    }).then((result) => {
+                        if (result.isConfirmed && fileInputRef.current) {
+                            fileInputRef.current.click();
+                        }
+                    });
+                }
+            };
+
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    processUpload(file);
+                }
+                e.target.value = ''; 
+            };
+
+           
+            const createProduct = async () => {
+                const { value: formValues } = await Swal.fire({
+                    title: 'Create New Product',
+                    html: `
+                        <input id="sku" class="swal2-input" placeholder="SKU *" style="width: 80%;">
+                        <input id="name" class="swal2-input" placeholder="Product Name *" style="width: 80%;">
+                        <textarea id="description" class="swal2-textarea" placeholder="Description (optional)" style="width: 80%; height: 100px;"></textarea>
+                    `,
+                    focusConfirm: false,
+                    showCancelButton: true,
+                    confirmButtonText: 'Create',
+                    cancelButtonText: 'Cancel',
+                    preConfirm: () => {
+                        const sku = document.getElementById('sku').value;
+                        const name = document.getElementById('name').value;
+                        const description = document.getElementById('description').value;
+                        
+                        if (!sku || !name) {
+                            Swal.showValidationMessage('SKU and Name are required');
+                            return false;
+                        }
+                        
+                        return { sku, name, description };
+                    }
+                });
+
+                if (!formValues) return;
+
+                try {
+                    const res = await fetch(`${API_BASE}/products`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(formValues)
+                    });
+                    
+                    if (!res.ok) {
+                        const error = await res.json();
+                        throw new Error(error.detail || 'Failed to create product');
+                    }
+                    
+                    showToast('Product created successfully!', 'success');
+                    fetchProducts();
+                } catch (err) {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Creation Failed',
+                        text: err.message
+                    });
+                }
+            };
+
+        
+            const editProduct = async (product) => {
+                const { value: formValues } = await Swal.fire({
+                    title: 'Edit Product',
+                    html: `
+                        <input id="sku" class="swal2-input" placeholder="SKU *" value="${product.sku}" style="width: 80%;">
+                        <input id="name" class="swal2-input" placeholder="Product Name *" value="${product.name}" style="width: 80%;">
+                        <textarea id="description" class="swal2-textarea" placeholder="Description" style="width: 80%; height: 100px;">${product.description || ''}</textarea>
+                        <div style="margin-top: 10px;">
+                            <label style="display: flex; align-items: center; justify-content: center; font-size: 14px;">
+                                <input type="checkbox" id="active" ${product.active ? 'checked' : ''} style="margin-right: 8px;">
+                                Active Product
+                            </label>
+                        </div>
+                    `,
+                    focusConfirm: false,
+                    showCancelButton: true,
+                    confirmButtonText: 'Update',
+                    cancelButtonText: 'Cancel',
+                    preConfirm: () => {
+                        const sku = document.getElementById('sku').value;
+                        const name = document.getElementById('name').value;
+                        const description = document.getElementById('description').value;
+                        const active = document.getElementById('active').checked;
+                        
+                        if (!sku || !name) {
+                            Swal.showValidationMessage('SKU and Name are required');
+                            return false;
+                        }
+                        
+                        return { sku, name, description, active };
+                    }
+                });
+
+                if (!formValues) return;
+
+                try {
+                    const res = await fetch(`${API_BASE}/products/${product.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(formValues)
+                    });
+                    
+                    if (!res.ok) {
+                        const error = await res.json();
+                        throw new Error(error.detail || 'Failed to update product');
+                    }
+                    
+                    showToast('Product updated successfully!', 'success');
+                    fetchProducts();
+                } catch (err) {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Update Failed',
+                        text: err.message
+                    });
+                }
+            };
+
+            const handleBulkDelete = async () => {
+                const result = await Swal.fire({
+                    title: 'Are you absolutely sure?',
+                    text: "This will permanently delete ALL products. This action cannot be undone!",
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#d33',
+                    cancelButtonColor: '#3085d6',
+                    confirmButtonText: 'Yes, delete all!',
+                    cancelButtonText: 'Cancel',
+                    focusCancel: true
+                });
+
+                if (!result.isConfirmed) return;
+
+                setLoading(true);
+                try {
+                    const res = await fetch(`${API_BASE}/products/bulk-delete`, { 
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    const data = await res.json();
+                    
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Deleted!',
+                        text: `Successfully deleted ${data.count || 'all'} products`,
+                        timer: 2000
+                    });
+                    
+                    fetchProducts();
+                } catch (err) {
+                    showToast('Bulk delete failed', 'error');
+                }
+                setLoading(false);
+            };
+
+            const deleteProduct = async (id, sku) => {
+                const result = await Swal.fire({
+                    title: 'Delete Product?',
+                    text: `Are you sure you want to delete ${sku}?`,
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonColor: '#d33',
+                    cancelButtonColor: '#3085d6',
+                    confirmButtonText: 'Delete',
+                    cancelButtonText: 'Cancel'
+                });
+
+                if (!result.isConfirmed) return;
+
+                try {
+                    await fetch(`${API_BASE}/products/${id}`, { method: 'DELETE' });
+                    showToast('Product deleted successfully', 'success');
+                    fetchProducts();
+                } catch (err) {
+                    showToast('Delete failed', 'error');
+                }
+            };
+
+            const toggleProductActive = async (id, currentStatus) => {
+                try {
+                    await fetch(`${API_BASE}/products/${id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ active: !currentStatus })
+                    });
+                    showToast(`Product ${!currentStatus ? 'activated' : 'deactivated'}`, 'success');
+                    fetchProducts();
+                } catch (err) {
+                    showToast('Update failed', 'error');
+                }
+            };
+
+        
+            const addWebhook = async () => {
+                const { value: url } = await Swal.fire({
+                    title: 'Add Webhook',
+                    input: 'url',
+                    inputLabel: 'Webhook URL',
+                    inputPlaceholder: 'https://webhook.site/unique-id',
+                    showCancelButton: true,
+                    inputValidator: (value) => {
+                        if (!value) return 'You need to enter a URL!';
+                        try {
+                            new URL(value);
+                        } catch (e) {
+                            return 'Please enter a valid URL';
+                        }
+                    }
+                });
+
+                if (!url) return;
+                
+                try {
+                    await fetch(`${API_BASE}/webhooks`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url, event_type: 'product.imported', enabled: true })
+                    });
+                    showToast('Webhook added successfully', 'success');
+                    fetchWebhooks();
+                } catch (err) {
+                    showToast('Failed to add webhook', 'error');
+                }
+            };
+
+            // EDIT WEBHOOK
+            const editWebhook = async (webhook) => {
+                const { value: formValues } = await Swal.fire({
+                    title: 'Edit Webhook',
+                    html: `
+                        <input id="url" class="swal2-input" placeholder="Webhook URL *" value="${webhook.url}" style="width: 80%;">
+                        <select id="event_type" class="swal2-input" style="width: 80%;">
+                            <option value="product.imported" ${webhook.event_type === 'product.imported' ? 'selected' : ''}>Product Imported</option>
+                            <option value="product.created" ${webhook.event_type === 'product.created' ? 'selected' : ''}>Product Created</option>
+                            <option value="product.updated" ${webhook.event_type === 'product.updated' ? 'selected' : ''}>Product Updated</option>
+                            <option value="product.deleted" ${webhook.event_type === 'product.deleted' ? 'selected' : ''}>Product Deleted</option>
+                        </select>
+                        <div style="margin-top: 15px;">
+                            <label style="display: flex; align-items: center; justify-content: center; font-size: 14px;">
+                                <input type="checkbox" id="enabled" ${webhook.enabled ? 'checked' : ''} style="margin-right: 8px;">
+                                Enabled
+                            </label>
+                        </div>
+                    `,
+                    focusConfirm: false,
+                    showCancelButton: true,
+                    confirmButtonText: 'Update',
+                    cancelButtonText: 'Cancel',
+                    preConfirm: () => {
+                        const url = document.getElementById('url').value;
+                        const event_type = document.getElementById('event_type').value;
+                        const enabled = document.getElementById('enabled').checked;
+                        
+                        if (!url) {
+                            Swal.showValidationMessage('URL is required');
+                            return false;
+                        }
+                        
+                        try {
+                            new URL(url);
+                        } catch (e) {
+                            Swal.showValidationMessage('Please enter a valid URL');
+                            return false;
+                        }
+                        
+                        return { url, event_type, enabled };
+                    }
+                });
+
+                if (!formValues) return;
+
+                try {
+                    const res = await fetch(`${API_BASE}/webhooks/${webhook.id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(formValues)
+                    });
+                    
+                    if (!res.ok) throw new Error('Failed to update webhook');
+                    
+                    showToast('Webhook updated successfully!', 'success');
+                    fetchWebhooks();
+                } catch (err) {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Update Failed',
+                        text: err.message
+                    });
+                }
+            };
+
+            const deleteWebhook = async (id, url) => {
+                const result = await Swal.fire({
+                    title: 'Delete Webhook?',
+                    text: `Remove webhook: ${url}`,
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonColor: '#d33',
+                    cancelButtonColor: '#3085d6',
+                    confirmButtonText: 'Delete',
+                    cancelButtonText: 'Cancel'
+                });
+
+                if (!result.isConfirmed) return;
+
+                try {
+                    await fetch(`${API_BASE}/webhooks/${id}`, { method: 'DELETE' });
+                    showToast('Webhook deleted', 'success');
+                    fetchWebhooks();
+                } catch (err) {
+                    showToast('Delete failed', 'error');
+                }
+            };
+
+            const testWebhook = async (id) => {
+                try {
+                    const res = await fetch(`${API_BASE}/webhooks/${id}/test`, { method: 'POST' });
+                    const data = await res.json();
+                    
+                    if (data.status === 'success') {
+                        Swal.fire({
+                            icon: 'success',
+                            title: 'Webhook Test Successful',
+                            text: `Response code: ${data.status_code}`,
+                            timer: 2000
+                        });
+                    } else {
+                        throw new Error(data.error);
+                    }
+                } catch (err) {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Webhook Test Failed',
+                        text: err.message || 'Could not reach webhook URL',
+                        showConfirmButton: true
+                    });
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+                    <header className="bg-white shadow-md border-b border-gray-200">
+                        <div className="max-w-7xl mx-auto px-6 py-5">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h1 className="text-3xl font-bold text-gray-900">Product Importer</h1>
+                                    <p className="text-sm text-gray-600 mt-1">Acme Inc. - Complete Product Management System</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
+                                        ● Live
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    <div className="max-w-7xl mx-auto px-6 mt-8">
+                        <div className="flex gap-2 border-b border-gray-200 bg-white rounded-t-lg">
+                            {[
+                                { id: 'upload', label: '📤 Upload CSV' },
+                                { id: 'products', label: '📦 Products' },
+                                { id: 'webhooks', label: '🔗 Webhooks' }
+                            ].map(tab => (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setActiveTab(tab.id)}
+                                    className={`px-6 py-4 border-b-3 transition-all font-semibold ${
+                                        activeTab === tab.id
+                                            ? 'border-blue-600 text-blue-600 bg-blue-50'
+                                            : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    {tab.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="max-w-7xl mx-auto px-6 pb-8">
+                        {activeTab === 'upload' && (
+                            <div className="bg-white rounded-b-lg rounded-tr-lg shadow-lg p-8">
+                                <h2 className="text-2xl font-bold mb-2">Upload Product CSV</h2>
+                                <p className="text-gray-600 mb-6">
+                                    Upload a CSV file with columns: <code className="bg-gray-100 px-2 py-1 rounded font-mono text-sm">sku, name, description</code>
+                                    <br/>Supports up to 500,000 products. Large files (100MB+) may take several minutes to process.
+                                    <br/>Duplicates will be overwritten by SKU (case-insensitive).
+                                </p>
+
+                                <div className="border-3 border-dashed border-gray-300 rounded-xl p-16 text-center hover:border-blue-400 transition-all bg-gradient-to-br from-gray-50 to-white">
+                                    <div className="text-8xl mb-6">📁</div>
+                                    <label className="cursor-pointer">
+                                        <span className="bg-blue-600 text-white px-8 py-4 rounded-lg inline-block hover:bg-blue-700 transition-colors font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5">
+                                            Choose CSV File
+                                        </span>
+                                        <input 
+                                            ref={fileInputRef}
+                                            type="file" 
+                                            accept=".csv" 
+                                            onChange={handleFileUpload} 
+                                            className="hidden" 
+                                        />
+                                    </label>
+                                    <p className="text-sm text-gray-500 mt-4">CSV files only, up to 500,000 rows</p>
+                                </div>
+
+                                {uploadProgress && (
+                                    <div className="mt-8 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-8 border-2 border-blue-200 shadow-lg">
+                                        <div className="flex justify-between mb-3">
+                                            <span className="font-bold text-xl">
+                                                {uploadProgress.status === 'uploading' && '⬆️ Uploading...'}
+                                                {uploadProgress.status === 'parsing' && '📖 Parsing CSV...'}
+                                                {uploadProgress.status === 'importing' && '⚙️ Importing Products...'}
+                                                {uploadProgress.status === 'completed' && '✅ Import Complete!'}
+                                                {uploadProgress.status === 'completed_with_errors' && '⚠️ Completed with Errors'}
+                                                {uploadProgress.status === 'failed' && '❌ Import Failed'}
+                                            </span>
+                                            <span className="text-2xl font-bold text-blue-600">{uploadProgress.percent}%</span>
+                                        </div>
+                                        <div className="w-full bg-gray-200 rounded-full h-5 overflow-hidden shadow-inner">
+                                            <div className={`h-5 rounded-full transition-all duration-300 ${
+                                                uploadProgress.status === 'completed' ? 'bg-gradient-to-r from-green-400 to-green-600' :
+                                                uploadProgress.status === 'completed_with_errors' ? 'bg-gradient-to-r from-orange-400 to-orange-600' :
+                                                uploadProgress.status === 'failed' ? 'bg-gradient-to-r from-red-400 to-red-600' : 
+                                                'bg-gradient-to-r from-blue-400 to-indigo-600'
+                                            }`} style={{ width: `${uploadProgress.percent}%` }} />
+                                        </div>
+                                        {uploadProgress.processed > 0 && (
+                                            <p className="text-sm text-gray-700 mt-4 font-semibold">
+                                                Processed: <span className="text-blue-600 text-lg">{uploadProgress.processed.toLocaleString()}</span> / {uploadProgress.total.toLocaleString()} products
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {activeTab === 'products' && (
+                            <div className="bg-white rounded-b-lg rounded-tr-lg shadow-lg">
+                                <div className="p-6 border-b flex flex-wrap gap-4 bg-gray-50 rounded-tr-lg">
+                                    <input
+                                        type="text"
+                                        placeholder="🔍 Search by SKU, name, or description..."
+                                        value={filters.search}
+                                        onChange={(e) => {
+                                            setFilters({ ...filters, search: e.target.value });
+                                            setPage(1);
+                                        }}
+                                        className="flex-1 min-w-[300px] px-4 py-3 border-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    />
+                                    <select
+                                        value={filters.active}
+                                        onChange={(e) => {
+                                            setFilters({ ...filters, active: e.target.value });
+                                            setPage(1);
+                                        }}
+                                        className="px-4 py-3 border-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                                    >
+                                        <option value="all">All Products</option>
+                                        <option value="true">Active Only</option>
+                                        <option value="false">Inactive Only</option>
+                                    </select>
+                                    <button
+                                        onClick={createProduct}
+                                        className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold shadow-md hover:shadow-lg transform hover:-translate-y-0.5 transition-all"
+                                    >
+                                        ➕ Add Product
+                                    </button>
+                                    <button
+                                        onClick={handleBulkDelete}
+                                        className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold shadow-md hover:shadow-lg transform hover:-translate-y-0.5 transition-all"
+                                    >
+                                        🗑️ Delete All
+                                    </button>
+                                </div>
+
+                                <div className="overflow-x-auto">
+                                    {loading ? (
+                                        <div className="p-16 text-center">
+                                            <div className="inline-block animate-spin rounded-full h-16 w-16 border-4 border-blue-500 border-t-transparent"></div>
+                                            <p className="mt-4 text-gray-600 font-medium">Loading products...</p>
+                                        </div>
+                                    ) : products.length === 0 ? (
+                                        <div className="p-16 text-center text-gray-500">
+                                            <div className="text-8xl mb-6">📦</div>
+                                            <p className="text-xl font-semibold">No products found</p>
+                                            <p className="text-sm mt-2">Upload a CSV or add products manually</p>
+                                        </div>
+                                    ) : (
+                                        <table className="w-full">
+                                            <thead className="bg-gray-100 border-b-2">
+                                                <tr>
+                                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">SKU</th>
+                                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Name</th>
+                                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Description</th>
+                                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Status</th>
+                                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-200">
+                                                {products.map(product => (
+                                                    <tr key={product.id} className="hover:bg-blue-50 transition-colors">
+                                                        <td className="px-6 py-4 font-mono text-sm font-bold text-gray-900">{product.sku}</td>
+                                                        <td className="px-6 py-4 font-semibold text-gray-900">{product.name}</td>
+                                                        <td className="px-6 py-4 text-sm text-gray-600 max-w-xs truncate">
+                                                            {product.description || '-'}
+                                                        </td>
+                                                        <td className="px-6 py-4">
+                                                            <button
+                                                                onClick={() => toggleProductActive(product.id, product.active)}
+                                                                className={`px-4 py-2 rounded-full text-xs font-bold transition-all ${
+                                                                    product.active
+                                                                        ? 'bg-green-100 text-green-700 hover:bg-green-200 shadow-sm'
+                                                                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200 shadow-sm'
+                                                                }`}
+                                                            >
+                                                                {product.active ? '✓ Active' : '✗ Inactive'}
+                                                            </button>
+                                                        </td>
+                                                        <td className="px-6 py-4">
+                                                            <div className="flex gap-3">
+                                                                <button
+                                                                    onClick={() => editProduct(product)}
+                                                                    className="text-blue-600 hover:text-blue-800 font-bold transition-colors"
+                                                                >
+                                                                    Edit
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => deleteProduct(product.id, product.sku)}
+                                                                    className="text-red-600 hover:text-red-800 font-bold transition-colors"
+                                                                >
+                                                                    Delete
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+
+                                {totalPages > 1 && (
+                                    <div className="p-6 border-t flex items-center justify-between bg-gray-50 rounded-b-lg">
+                                        <button
+                                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                                            disabled={page === 1}
+                                            className="px-6 py-3 border-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white font-semibold transition-all shadow-sm"
+                                        >
+                                            ← Previous
+                                        </button>
+                                        <span className="text-sm font-bold text-gray-700 bg-white px-4 py-2 rounded-lg shadow-sm">
+                                            Page {page} of {totalPages}
+                                        </span>
+                                        <button
+                                            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                                            disabled={page === totalPages}
+                                            className="px-6 py-3 border-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white font-semibold transition-all shadow-sm"
+                                        >
+                                            Next →
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {activeTab === 'webhooks' && (
+                            <div className="bg-white rounded-b-lg rounded-tr-lg shadow-lg">
+                                <div className="p-6 border-b flex items-center justify-between bg-gray-50 rounded-tr-lg">
+                                    <div>
+                                        <h2 className="text-2xl font-bold text-gray-900">Webhook Configuration</h2>
+                                        <p className="text-sm text-gray-600 mt-1">Receive notifications for product events</p>
+                                    </div>
+                                    <button
+                                        onClick={addWebhook}
+                                        className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold shadow-md hover:shadow-lg transform hover:-translate-y-0.5 transition-all"
+                                    >
+                                        ➕ Add Webhook
+                                    </button>
+                                </div>
+
+                                <div className="divide-y">
+                                    {webhooks.length === 0 ? (
+                                        <div className="p-16 text-center text-gray-500">
+                                            <div className="text-8xl mb-6">🔗</div>
+                                            <p className="text-xl font-semibold">No webhooks configured</p>
+                                            <p className="text-sm mt-2">Add a webhook to receive notifications</p>
+                                            <p className="text-xs text-gray-400 mt-4">
+                                                Try: <a href="https://webhook.site" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline font-semibold">webhook.site</a> for testing
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        webhooks.map(webhook => (
+                                            <div key={webhook.id} className="p-6 flex items-center justify-between hover:bg-blue-50 transition-colors">
+                                                <div className="flex-1">
+                                                    <div className="font-mono text-sm text-gray-900 break-all font-semibold">{webhook.url}</div>
+                                                    <div className="text-xs text-gray-500 mt-1">
+                                                        Event: <span className="font-semibold text-gray-700">{webhook.event_type}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-3 ml-4">
+                                                    <span className={`px-4 py-2 rounded-full text-xs font-bold shadow-sm ${
+                                                        webhook.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                                                    }`}>
+                                                        {webhook.enabled ? '✓ Enabled' : '✗ Disabled'}
+                                                    </span>
+                                                    <button
+                                                        onClick={() => editWebhook(webhook)}
+                                                        className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm hover:bg-blue-200 font-semibold transition-all shadow-sm"
+                                                    >
+                                                        Edit
+                                                    </button>
+                                                    <button
+                                                        onClick={() => testWebhook(webhook.id)}
+                                                        className="px-4 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm hover:bg-purple-200 font-semibold transition-all shadow-sm"
+                                                    >
+                                                        Test
+                                                    </button>
+                                                    <button
+                                                        onClick={() => deleteWebhook(webhook.id, webhook.url)}
+                                                        className="text-red-600 hover:text-red-800 font-bold transition-colors"
+                                                    >
+                                                        Delete
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <footer className="max-w-7xl mx-auto px-6 py-8 text-center text-sm text-gray-500">
+                        <p className="font-medium">Product Importer v1.0 - Complete CRUD System for Acme Inc.</p>
+                        <p className="text-xs mt-1">FastAPI + React + SweetAlert2 | Full Product & Webhook Management</p>
+                    </footer>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
