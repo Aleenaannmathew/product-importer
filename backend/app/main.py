@@ -51,11 +51,6 @@ class WebhookUpdate(BaseModel):
     enabled: Optional[bool] = None
 
 
-@app.get("/")
-def serve_frontend():
-    frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "frontend", "index.html")
-    return FileResponse(frontend_path)
-
 @app.get("/health")
 def health_check():
     return {"status": "healthy", "version": "1.0.0"}
