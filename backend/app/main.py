@@ -16,8 +16,6 @@ from .models import Product, Webhook, ImportJob
 from .tasks import process_csv_import
 
 
-Base.metadata.create_all(bind=engine)
-
 app = FastAPI(title="Product Importer API", version="1.0.0")
 
 
