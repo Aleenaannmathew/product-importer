@@ -1,219 +1,255 @@
-# 📦 Product Importer – Backend Engineer Assignment  
-A high-performance FastAPI application designed for importing **up to 500,000 products** from CSV, with **real-time progress tracking**, full **CRUD UI**, **webhook support**, and **asynchronous background processing** using Celery + Redis.
+# 📦 Product Importer – Backend Engineer Assignment
 
-Deployment: **Render (Free Tier)**  
-Tech Stack: `FastAPI`, `SQLAlchemy`, `Celery`, `Redis`, `PostgreSQL`, `React`, `Docker`
+A high-performance FastAPI application built for importing up to **500,000 products** with real-time progress updates, webhook automation, and complete CRUD management — powered by **Celery, Redis, PostgreSQL, and React**.
+
+Live Deployment: *(Public VM + HTTPS enabled)*  
+Tech Stack: FastAPI, SQLAlchemy, Celery, Redis, PostgreSQL, Nginx, React, Tailwind, Docker
 
 ---
 
-## 🚀 **Objective**
+# 🚀 Objective
+This project was built for **Acme Inc.** as part of the Backend Engineer evaluation.  
+The goal is to deliver a scalable, production-ready platform for:
 
-This project was built for **Acme Inc.** as part of a backend engineering evaluation.  
-The core goal is to implement a production-ready web application capable of:
-
-- Importing large CSV files (up to **500,000 rows**)
-- Real-time progress updates (SSE)
+- Large CSV imports (up to 500k rows)
+- Real-time progress streaming
 - Case-insensitive SKU upsert logic
-- Complete CRUD UI for products
+- Product CRUD UI (React)
 - Bulk delete operations
-- Webhook configuration + event triggers
-- Horizontally scalable async processing
+- Webhook configuration & dispatching
+- Horizontal scalability via Celery workers
 
 ---
 
-# 🧩 **Features Mapped to Assignment Stories**
+# 🧩 Feature Breakdown (Mapped to Assignment Stories)
 
-## ✅ **STORY 1 — File Upload via UI**
-
-✔ Upload CSV up to **500,000 records**  
-✔ Files streamed to disk in **1 MB chunks** (prevents memory overload)  
-✔ Case-insensitive SKU uniqueness  
-✔ Upsert: duplicate SKUs are automatically **overwritten**  
-✔ Products created as **active** by default  
-✔ Large files do not block UI
-
----
-
-## ✅ **STORY 1A — Upload Progress Visibility**
-
-✔ Real-time progress via **Server-Sent Events (SSE)**  
-✔ Progress states sent to UI:
-- `uploading`
-- `parsing`
-- `importing`
-- `completed`
-- `completed_with_errors`
-- `failed`
-
-✔ Detailed error summary when import fails  
-✔ Automatic retry option from UI  
-✔ Frontend progress bar with % and record counters
+## ✅ STORY 1 — File Upload via UI
+- Upload CSV file up to **500,000** records  
+- File streamed in **1MB chunks** to avoid memory overload  
+- Case-insensitive SKU uniqueness  
+- Upsert behavior: duplicate SKUs overwrite existing ones  
+- Upload happens asynchronously through Celery  
+- Optimized for very large datasets  
 
 ---
 
-## ✅ **STORY 2 — Product Management UI**
+## ✅ STORY 1A — Real-Time Upload Progress (SSE)
+- Server-Sent Events for real-time progress  
+- Progress states streamed to UI:
 
-✔ Full CRUD UI using **React + Tailwind**  
-✔ Features:
+  - `uploading`  
+  - `parsing`  
+  - `importing`  
+  - `completed`  
+  - `completed_with_errors`  
+  - `failed`  
+
+- UI progress bar + status indicators  
+- Detailed error boxes for failed imports  
+- One-click retry option  
+
+---
+
+## ✅ STORY 2 — Product Management UI
+A complete CRUD dashboard including:
 
 - Pagination  
-- Search by SKU/name/description  
-- Filter by Active/Inactive/All  
-- Inline edit modals (SweetAlert2)  
-- SKU uniqueness enforced  
-- User-friendly design  
+- Search (SKU, name, description)  
+- Filters (Active, Inactive, All)  
+- Inline modals for editing / creating  
+- Status toggle  
+- Delete with confirmation  
 
 ---
 
-## ✅ **STORY 3 — Bulk Delete**
-
-✔ Single-click “Delete All Products”  
-✔ Confirmation modal  
-✔ Toast notifications on success/failure  
+## ✅ STORY 3 — Bulk Delete
+- One-click delete-all  
+- Confirmation modal  
+- Backend optimized delete for 100k+ rows  
+- Success/error notifications  
 
 ---
 
-## ✅ **STORY 4 — Webhook Management**
+## ✅ STORY 4 — Webhook Management Panel
+Supports:
 
-✔ Add/Edit/Delete webhooks  
-✔ Enable/Disable switch  
-✔ Support for event types:
+- Add webhook  
+- Edit webhook  
+- Enable/Disable  
+- Delete  
+- Test webhook (POST request via Celery)  
+
+Event Types:
+
 - `product.imported`
 - `product.created`
 - `product.updated`
 - `product.deleted`
 
-✔ Test webhook button (sends POST request)  
-✔ Celery-powered async webhook dispatching  
+Webhook calls are **asynchronous**, powered by Celery.
 
 ---
 
-# 🏗️ **System Architecture**
+# 🏗️ System Architecture
 
-              ┌────────────────────────┐
-              │       Frontend (React)  │
-              │  Upload CSV / CRUD / UI │
-              └───────────────┬────────┘
-                              │
-                              ▼
-               ┌────────────────────────┐
-               │ FastAPI Backend        │
-               │ - File Upload API      │
-               │ - Product CRUD API     │
-               │ - Webhook API          │
-               │ - SSE Progress API     │
-               └───────────────┬────────┘
-                               │ enqueue job
-                               ▼
-               ┌────────────────────────┐
-               │ Celery Worker          │
-               │ - Chunked CSV parsing  │
-               │ - Upsert products      │
-               │ - Send webhooks        │
-               └───────────────┬────────┘
-                               │
-                               ▼
-               ┌────────────────────────┐
-               │ PostgreSQL (Render)    │
-               └────────────────────────┘
+```
+          ┌────────────────────────┐
+          │     Frontend (React)   │
+          │  CSV Upload / CRUD UI  │
+          └───────────────┬────────┘
+                          │
+                          ▼
+           ┌────────────────────────┐
+           │ FastAPI Backend        │
+           │ - File Upload API      │
+           │ - Product CRUD API     │
+           │ - Webhook API          │
+           │ - SSE Progress Stream  │
+           └───────────────┬────────┘
+                           │ Celery Task Queue
+                           ▼
+           ┌────────────────────────┐
+           │ Celery Worker          │
+           │ - Parse CSV in chunks  │
+           │ - Upsert Products      │
+           │ - Dispatch Webhooks    │
+           └───────────────┬────────┘
+                           │
+                           ▼
+           ┌────────────────────────┐
+           │ PostgreSQL (Cloud)     │
+           └────────────────────────┘
 
-
-Broker: **Upstash Redis Free Tier**  
-Deployment: **Render Web Service + Worker**
+Broker: Redis (Upstash / Local)
+Reverse Proxy: Nginx
+Deployment: GCP VM
+```
 
 ---
 
-# 🛠️ **Tech Stack**
+# 🛠️ Tech Stack
 
 ### **Backend**
 - FastAPI  
 - SQLAlchemy ORM  
 - PostgreSQL  
-- Celery  
-- Redis (Upstash)  
+- Redis (as Celery broker)  
+- Celery (async processing)  
 - Uvicorn + Gunicorn  
+- Nginx reverse proxy  
 
 ### **Frontend**
-- React ( CDN )  
+- React (CDN build)  
 - TailwindCSS  
 - SweetAlert2  
 
-### **Infra**
+### **Infrastructure**
 - Docker  
-- Render (Free Tier)  
-- Upstash Redis (Free tier)  
-
-### **Testing**
-- pytest  
-- pytest-cov  
+- GCP Compute Engine  
+- Supervisor (process manager)  
+- HTTPS via Certbot  
 
 ---
 
-# 📂 **Project Structure**
+# 📂 Project Structure
 
+```
 product-importer/
 │── backend/
-│ ├── app/
-│ │ ├── main.py
-│ │ ├── tasks.py
-│ │ ├── models.py
-│ │ ├── database.py
-│ │ └── ...
-│ ├── tests/
-│ ├── Dockerfile
-│ ├── requirements.txt
-│ └── docker-compose.yml
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── tasks.py
+│   │   ├── models.py
+│   │   ├── database.py
+│   │   └── ...
+│   ├── Dockerfile
+│   └── requirements.txt
 │
 │── frontend/
-│ └── index.html (React UI)
+│   └── index.html
 │
 │── README.md
-│── .gitignore
+└── docker-compose.yml (optional)
+```
 
+---
 
+# ⚙️ Local Installation
 
-# ⚙️ **Installation (Local Setup)**
-
-## 1️⃣ Clone Repository
-
+### 1️⃣ Clone Repository
+```sh
 git clone https://github.com/yourusername/product-importer.git
 cd product-importer/backend
+```
 
-
-2️⃣ Create Virtual Environment
-
+### 2️⃣ Create Virtual Environment
+```sh
 python -m venv venv
-venv\Scripts\activate   # Windows
-source venv/bin/activate  # Mac/Linux
-3️⃣ Install Dependencies
+source venv/bin/activate   # Linux/Mac
+venv\Scripts\activate      # Windows
+```
 
+### 3️⃣ Install Dependencies
+```sh
 pip install -r requirements.txt
+```
 
-4️⃣ Run FastAPI Server
-
+### 4️⃣ Run FastAPI Server
+```sh
 uvicorn app.main:app --reload
-Visit:
+```
+Access UI:  
 👉 http://localhost:8000
 
-🐳 Docker Setup (Recommended)
-Build & run all services:
+---
 
+# 🐳 Docker Setup (Recommended)
+
+```sh
 docker-compose up --build
+```
 
 This starts:
 
-FastAPI backend
+- FastAPI backend  
+- Redis  
+- Celery worker  
+- PostgreSQL  
 
-Celery worker
+---
 
-Redis
+# 🧪 Tests
 
-PostgreSQL
-
-🧪 Running Tests
-
-Install test dependencies:
+Install:
+```sh
 pip install -r requirements-test.txt
+```
 
-Run all tests:
+Run:
+```sh
 pytest -v --cov=app
+```
+
+---
+
+# 🌐 Deployment Architecture (GCP)
+
+- Nginx → FastAPI (Gunicorn + Uvicorn)
+- Supervisor keeps:
+  - gunicorn alive
+  - celery worker alive
+- Certbot auto-renews HTTPS
+
+Server is fully self-healing:
+- Restarts after crash
+- Restarts after VM reboot
+- Celery auto reconnects to Redis
+
+---
+
+# ✔️ Deliverables
+- Fully working backend  
+- Fully working frontend  
+- Deployment link  
+- GitHub repository  
+- AI tools used  
