@@ -13,7 +13,7 @@ from datetime import datetime
 
 from .database import get_db, engine, Base
 from .models import Product, Webhook, ImportJob
-from .tasks import process_csv_import
+from app.tasks import process_csv_import
 
 
 app = FastAPI(title="Product Importer API", version="1.0.0")
