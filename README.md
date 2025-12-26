@@ -3,18 +3,7 @@
 A production-ready FastAPI application built for importing up to **500,000 products** with real-time progress tracking, async background processing, full CRUD UI, and webhook automation.  
 Built as part of a backend engineering evaluation for **Acme Inc. / Fulfil.io**.
 
----
 
-## 🚀 Live Deployment
-
-All services are deployed publicly on a **Google Cloud VM**.
-
-### **Frontend + API**
-🔗 http://34.29.230.87
-
-The backend uses **Gunicorn, Celery, Redis, PostgreSQL**, managed with **systemd**, ensuring all services automatically restart on VM reboot.
-
----
 
 ## ✔ Assignment Story Coverage
 
